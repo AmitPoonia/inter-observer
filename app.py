@@ -126,30 +126,30 @@ def extract_keywords(text: str, special_tags: list = None):
     keyword extraction for given text, with option to provide
     list of specific keywords which should always be extracted
     """
-    result = []
-    pos_tag = ['PROPN', 'NOUN', 'ADJ']
+    keywords = []
+    pos_tags = ['PROPN', 'NOUN', 'ADJ']
     doc = nlp_spacy(text.lower())
 
     if special_tags:
         tags = [tag.lower() for tag in special_tags]
         for token in doc:
             if token.text in tags:
-                result.append(token.text)
+                keywords.append(token.text)
 
     for chunk in doc.noun_chunks:
         final_chunk = ""
         for token in chunk:
-            if token.pos_ in pos_tag:
+            if token.pos_ in pos_tags:
                 final_chunk = final_chunk + token.text + " "
         if final_chunk:
-            result.append(final_chunk.strip())
+            keywords.append(final_chunk.strip())
 
     for token in doc:
         if (token.text in nlp_spacy.Defaults.stop_words) or (token.text in punctuation):
             continue
-        if token.pos_ in pos_tag:
-            result.append(token.text)
-    return list(set(result))
+        if token.pos_ in pos_tags:
+            keywords.append(token.text)
+    return list(set(keywords))
 
 
 def summarization(text):
@@ -162,8 +162,8 @@ def summarization(text):
 
 def mark(keywords: Set[str], text: str) -> List[Tuple[str, int]]:
     """
-    to mark or tag keywords in a text, which returns
-    the result in a data structure which could be used
+    to mark or tag keywords in given text, and to return
+    marked text in a form or data structure which could be used
     in the template during rendering
     """
     try:
