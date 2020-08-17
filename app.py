@@ -1,25 +1,25 @@
 import os
+import re
+import sox
+import spacy
+import datetime
+
+from string import punctuation
+from ast import literal_eval
+
+from typing import List, Dict, Set, Tuple
+
 from flask import Flask
 from flask import request
 from flask import render_template
-import requests
-import sys
-import re
-import sox
-
-from typing import List, Dict, Set, Tuple
 
 from google.cloud import storage
 from google.cloud import speech_v1
 from google.cloud.speech_v1 import enums
-import io
-from string import punctuation
-
+from google.cloud import firestore
 
 from gensim.summarization import summarize
 
-import datetime
-import spacy
 
 UPLOAD_FOLDER = './temp'
 
@@ -29,31 +29,59 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 nlp_spacy = spacy.load('en_core_web_sm')
 
+db = firestore.Client()
+
+
+def upload_result(key: str, value: str):
+    """
+    uploads processed data to google's key-value datastore
+    """
+    try:
+        doc_ref = db.collection(u'results').document(key)
+        doc_ref.set({
+            u'data': value
+        })
+    except Exception as inst:
+        print("firestore upload failed", str(inst.args))
+
+
+def fetch_results():
+    """
+    fetches stored key-value data from google's datastore
+    """
+    users_ref = db.collection(u'results')
+    docs = users_ref.stream()
+    return docs
+
 
 # uploading local file to bucket
 def upload_file(source_file_path, destination_blob_name):
-    print("<<< trying upload file function", )
-    bucket_name = "trial-bucket-for-poc"
-    print("<<< ............0", storage.__version__)
-    storage_client = storage.Client()
-    print("<<< ............1")
-    bucket = storage_client.bucket(bucket_name)
-    print("<<< ............2")
-    blob = bucket.blob(destination_blob_name)
-    print("<<< ............3")
-    print("<<< ............", destination_blob_name, source_file_path)
-    blob.upload_from_filename(source_file_path)
+    """
+    uploads audio file in form of as small chunks to google's bucket storage
+    """
+    try:
+        bucket_name = "trial-bucket-for-poc"
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(destination_blob_name)
 
-    print(
-        "File {} uploaded to {} with URI {}.".format(
-            source_file_path, destination_blob_name, blob.self_link
+        blob._chunk_size = 8388608
+
+        blob.upload_from_filename(source_file_path)
+
+        print(
+            "File {} uploaded to {} with URI {}.".format(
+                source_file_path, destination_blob_name, blob.self_link
+            )
         )
-    )
+    except Exception as inst:
+        print("file upload failed " + str(type(inst)) + "::" + str(inst.args))
 
 
-# using bucket URI for recognition
 def sample_long_running_recognize(storage_uri):
-    print("<<< trying recognition function ")
+    """
+    long running ASR process for uploaded audio file
+    """
     client = speech_v1.SpeechClient()
     sample_rate_hertz = 16000
     language_code = "en-US"
@@ -76,24 +104,31 @@ def sample_long_running_recognize(storage_uri):
 
     for result in response.results:
         alternative = result.alternatives[0]
-        print(u"Transcript: {}".format(alternative.transcript))
+        #print(u"Transcript: {}".format(alternative.transcript))
         transcripts = transcripts + " " + alternative.transcript
 
     return transcripts
 
 
-def semantic_similarity(text1, text2):
-    print("<<< trying semantic similarity function ")
+def semantic_similarity(text1: str, text2: str) -> float:
+    """
+    calculates similarity scores between two
+    documents, in this case audi transcript and
+    job spec text
+    """
     doc1 = nlp_spacy(text1)
     doc2 = nlp_spacy(text2)
     return doc1.similarity(doc2)
 
 
-def extract_keywords(sequence, special_tags: list = None):
-    print("<<< trying keyword extraction function ")
+def extract_keywords(text: str, special_tags: list = None):
+    """
+    keyword extraction for given text, with option to provide
+    list of specific keywords which should always be extracted
+    """
     result = []
     pos_tag = ['PROPN', 'NOUN', 'ADJ']
-    doc = nlp_spacy(sequence.lower())
+    doc = nlp_spacy(text.lower())
 
     if special_tags:
         tags = [tag.lower() for tag in special_tags]
@@ -104,38 +139,35 @@ def extract_keywords(sequence, special_tags: list = None):
     for chunk in doc.noun_chunks:
         final_chunk = ""
         for token in chunk:
-            if (token.pos_ in pos_tag):
+            if token.pos_ in pos_tag:
                 final_chunk = final_chunk + token.text + " "
         if final_chunk:
             result.append(final_chunk.strip())
 
     for token in doc:
-        if (token.text in nlp_spacy.Defaults.stop_words or token.text in punctuation):
+        if (token.text in nlp_spacy.Defaults.stop_words) or (token.text in punctuation):
             continue
-        if (token.pos_ in pos_tag):
+        if token.pos_ in pos_tag:
             result.append(token.text)
     return list(set(result))
 
 
-def keywords_extraction(text):
-    return extract_keywords(text)
-
-
 def summarization(text):
-    print("<<< trying summarization function :: ")
     try:
         return summarize(text)
-    except:
+    except Exception as inst:
+        print("summarization FAILED:: ", str(type(inst)) + "::" + str(inst.args))
         return ""
 
 
 def mark(keywords: Set[str], text: str) -> List[Tuple[str, int]]:
-
-    print("<< trying marking ", keywords, text)
-
+    """
+    to mark or tag keywords in a text, which returns
+    the result in a data structure which could be used
+    in the template during rendering
+    """
     try:
-        str = '|'.join(keywords)
-        reg = "(" + str + ")"
+        reg = "(" + '|'.join(keywords) + ")"
         spans = re.split(reg, text, flags=re.IGNORECASE)
         pairs = []
 
@@ -143,103 +175,82 @@ def mark(keywords: Set[str], text: str) -> List[Tuple[str, int]]:
             if span.lower() in keywords:
                 pairs.append((span, 1))
             else:
-                #pairs.append((span, 0))
                 _pairs = list(map(lambda s: (s, 0), span.split(" ")))
                 pairs.extend(_pairs)
         return pairs
-
     except Exception as inst:
-        xx = "Something wrong with NLP function. " + inst.__str__()
-        print(xx)
+        print("Something wrong with marking function. " + inst.__str__())
         return []
 
 
-def nlp(file_paths: List[str]) -> Dict:
-    audio_path = file_paths[0]
-    text_path = file_paths[1]
+def nlp_work(audio_path: str, text_path: str) -> Dict:
+    """
+    main NLP functionality, returns a dictionary of results
+    to be used by the template
+    """
 
     target_name = "trial-audio-blob-" + "-".join(str(datetime.datetime.now()).split(" ")) + ".raw"
     upload_file(audio_path, target_name)
 
-    text1 = sample_long_running_recognize("gs://trial-bucket-for-poc/"+target_name)
-    text2 = open(text_path, "r").read()
+    audio_transcript = sample_long_running_recognize("gs://trial-bucket-for-poc/"+target_name)
+    job_spec_text = open(text_path, "r").read()
 
-    print("<<<<<<<<<< online is done")
+    audio_transcript_keywords = set(map(lambda k: k.lower(), extract_keywords(audio_transcript)))
+    job_spec_text_keywords = set(map(lambda k: k.lower(), extract_keywords(job_spec_text)))
 
-    keys1 = set(map(lambda k: k.lower(), keywords_extraction(text1)))
-    keys2 = set(map(lambda k: k.lower(), keywords_extraction(text2)))
-
-    print("<<<<<<<<<< keywords are done")
-
-    common_keys = keys1.intersection(keys2)
-
-    """
-    keys1_dict = {}
-    keys2_dict = {}
-
-    for k in keys1:
-        if k in keys2:
-            keys1_dict[k] = 1
-        else:
-            keys1_dict[k] = 0
-
-    for k in keys2:
-        if k in keys1:
-            keys2_dict[k] = 1
-        else:
-            keys2_dict[k] = 0
-    """
-
-    sum1 = str(summarization(text1))
-    print("1:: ", common_keys)
-    print("2:: ", sum1)
-    mark1 = mark(common_keys, sum1)
-
+    common_keywords = audio_transcript_keywords.intersection(job_spec_text_keywords)
 
     return {
-        #"Keywords in text 1 : ": keys1_dict,
-        #"Keywords in text 2 : ":  keys2_dict,
-        "Summary of interview: ":  mark1,
-        "Summary of job spec: ": mark(common_keys, str(summarization(text2))),
-        "Transcript of audio : ": mark(common_keys, str(text1)),
-        "Full job spec: ": mark(common_keys, str(text2)),
-        "Semantic similarity: ": str(semantic_similarity(text1, text2)) + "\n\n",
+        "Summary of interview: ":  mark(common_keywords, str(summarization(str(audio_transcript)))),
+        "Interview transcript : ": mark(common_keywords, str(audio_transcript)),
+        "Summary of job spec: ": mark(common_keywords, str(summarization(job_spec_text))),
+        "Full job spec: ": mark(common_keywords, str(job_spec_text)),
+        "Semantic similarity: ": str(semantic_similarity(audio_transcript, job_spec_text)) + "\n\n",
     }
 
 
 @app.route('/')
 def home():
-    return render_template('home.html')
+    if request.args.get("doc_keys") is not None:
+        docs = fetch_results()
+        for doc in docs:
+            if doc.id == request.args.get("doc_keys"):
+                return render_template('result.html', errors=[], results=literal_eval(doc.to_dict()["data"]))
+        return "The key not found"
+    else:
+        docs = fetch_results()
+        doc_keys = list(map(lambda d: d.id, docs))
+        return render_template('home.html', doc_keys=doc_keys)
 
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
+@app.route('/', methods=['POST'])
+def result():
     errors = []
     results = {}
+
     if request.method == "POST":
-        # get url that the user has entered
-        file_path1 = request.files['file1']
-        file_path2 = request.files['file2']
-        file_path1.save(os.path.join(app.config['UPLOAD_FOLDER'], file_path1.filename))
-        file_path2.save(os.path.join(app.config['UPLOAD_FOLDER'], file_path2.filename))
+        audio_file = request.files['file1']
+        text_file = request.files['file2']
+        audio_file.save(os.path.join(app.config['UPLOAD_FOLDER'], audio_file.filename))
+        text_file.save(os.path.join(app.config['UPLOAD_FOLDER'], text_file.filename))
 
-        source_audio = os.path.join(app.config['UPLOAD_FOLDER'], file_path1.filename)
-        encoded_audio = os.path.join(app.config['UPLOAD_FOLDER'], file_path1.filename+".raw")
+        source_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_file.filename)
+        encoded_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_file.filename+".raw")
 
+        # process the audio to acceptable encoding
         tfm = sox.Transformer()
         tfm.convert(16000, 1, 16)
-        tfm.build(source_audio, encoded_audio)
+        tfm.build(source_audio_path, encoded_audio_path)
 
         try:
-
-            print("<<< trying NLP function ", file_path1.filename)
-            results = nlp([
-                encoded_audio,
-                os.path.join(app.config['UPLOAD_FOLDER'], file_path2.filename)])
-            print(results)
+            results = nlp_work(
+                encoded_audio_path,
+                os.path.join(app.config['UPLOAD_FOLDER'], text_file.filename))
+            key = (str(audio_file.filename), str(text_file.filename))
+            upload_result(str(key), str(results))
             os.system("rm temp/*.*")
         except Exception as inst:
-            errors.append("Something wrong with NLP function. " + str(type(inst)) + "::" + str(inst.args))
+            errors.append("Something wrong with NLP functionalities. " + str(type(inst)) + "::" + str(inst.args))
     return render_template('result.html', errors=errors, results=results)
 
 

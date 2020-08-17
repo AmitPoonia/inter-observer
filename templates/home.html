@@ -14,23 +14,65 @@
 
   <div class="container">
       <br><br>
-      <h2> <center> Application for Interview Analysis </center> </h2>
-      <br><br>
+      <h1> <center> <b>Application for Interview Analysis </b> </center> </h1>
+      <br><br><br><br><br><br>
       <div class="row">
 
 
         <div class="col-sm-5 col-sm-offset-1">
-          <h4> <b> Instructions: </b> Please upload audio file with sample rake of 16k Hz and text file, in that order, the audio format should be wav or raw </h4>
+          <h4> <b> Instructions: </b> Please upload audio file with sample rake of 16k Hz and text file, in that order, the audio format should be wav </h4>
         </div>
 
         <div class="col-sm-5 col-sm-offset-1">
 
           <h4> Upload audio and text files </h4>
+          <br>
+          <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" rel="stylesheet"/>
+
+
+
+
+
+
           <form method="POST" action="" enctype="multipart/form-data">
-            <p><input type="file" name="file1"></p>
-            <p><input type="file" name="file2"></p>
+            <label class="btn btn-primary">
+          Upload interview audio <input type="file" style="display: none;" name="file1">
+          </label>
+
+          <br>
+          <br>
+
+          <label class="btn btn-primary">
+          Upload job spec <input type="file" style="display: none;" name="file2">
+          </label>
+
+            <br>
+             <br>
             <p><input type="submit" value="Submit"></p>
           </form>
+
+
+
+            {% if doc_keys %}
+                <form method="GET" action="" enctype="multipart/form-data">
+                <br><br><br>
+                <h4> Or select from these recent results </h4>
+                    <br>
+                <select name="doc_keys" id="doc_keys">
+
+                    {% for k in doc_keys%}
+                        <option value="{{k}}">{{k}}</option>
+                    {% endfor %}
+
+                </select>
+                    <br><br>
+                <p><input type="submit" value="Submit"></p>
+                </form>
+
+            {% endif %}
+
+
+
 
         </div>
 
@@ -39,8 +81,11 @@
   </div>
 
 
+
+
   <br><br>
     <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
     <script src="//netdna.bootstrapcdn.com/bootstrap/3.1.1/js/bootstrap.min.js"></script>
+
   </body>
 </html>
